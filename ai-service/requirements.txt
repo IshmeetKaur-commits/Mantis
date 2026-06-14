@@ -3,3 +3,8 @@ uvicorn
 google-genai
 python-dotenv
 pydantic
+flask
+flask-cors
+pymupdf
+sentence-transformers
+numpy
