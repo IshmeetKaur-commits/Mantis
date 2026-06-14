@@ -1,0 +1,10 @@
+Based on all collected symptoms and answers, determine the most probable cause.
+
+Provide:
+
+1. Likely cause
+2. Reasoning
+3. Troubleshooting steps
+4. Documentation reference if available
+
+Be concise and practical.
