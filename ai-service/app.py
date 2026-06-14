@@ -57,7 +57,7 @@ def retrieve():
     data = request.get_json()
 
     product_id = data.get("product_id")
-    query = data.get("query")
+    query = data.get("message") or data.get("query")
 
     if not product_id or not query:
         return jsonify({
