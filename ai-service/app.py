@@ -1,4 +1,5 @@
 import os
+import httpx  # Make sure to run 'pip install httpx' if you don't have it
 from fastapi import FastAPI, HTTPException
 from models.diagnostic_state import ChatRequest, ChatResponse, SessionState
 from services.gemini_service import ask_gemini
@@ -7,42 +8,48 @@ app = FastAPI(title="Mantis AI Diagnostic Engine")
 
 SESSIONS = {}
 
-# --- MOCK MOSS RETRIEVAL LAYER ---
-# If your teammate finishes the real vector DB, swap this out with their API call!
-def mock_moss_retrieve(product_id: int, user_message: str) -> str:
+# --- LIVE MOSS RETRIEVAL LAYER ---
+# Replaced the old mock function with your teammate's live production database!
+async def live_moss_retrieve(product_id: int, user_message: str) -> str:
     """
-    Simulates searching the Honda Activa 6G service manual based on keywords.
+    Queries the live MOSS vector search database on port 5001 for matching manual segments.
     """
-    msg = user_message.lower()
+    url = "http://localhost:5001/api/retrieve"
+    payload = {
+        "product_id": product_id,
+        "query": user_message
+    }
     
-    if "horn" in msg:
-        return """
-        [DOCUMENT SOURCE: Honda Activa 6G Service Manual - Section 12: Electrical Systems - Page 22]
-        - Horn Troubleshooting Checklist:
-          1. Verify battery voltage is above 12.4V. If low, headlights will dim when cranking.
-          2. Inspect Fuse F3 (10A mini-fuse) located in the front cover utility box. If blown, replace immediately.
-          3. Check horn grounding terminal connection at the frame for corrosion.
-        """
-    elif "start" in msg or "crank" in msg or "battery" in msg:
-        return """
-        [DOCUMENT SOURCE: Honda Activa 6G Service Manual - Section 3: Maintenance - Page 8]
-        - Engine Fails to Start:
-          1. Check if the side-stand indicator switch is clean and fully disengaged.
-          2. Measure battery voltage across terminals. Should read 12.6V resting.
-          3. Inspect spark plug cap connection for loose fit or moisture ingress.
-        """
-    
-    # Default fallback context if no explicit keywords match
-    return """
-    [DOCUMENT SOURCE: Honda Activa 6G General Specifications - Page 2]
-    - Standard Electrical System: 12V Maintenance-Free Battery.
-    - Standard Maintenance: Inspect fuses, wiring harnesses, and grounding points during routine physical inspection.
-    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=payload, timeout=5.0)
+            
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get("results", [])
+                
+                if not results:
+                    return "No matching manual documentation found for this specific symptom configuration."
+                
+                # Format the top matching manual fragments for Gemini's prompt background
+                context_str = ""
+                for doc in results:
+                    context_str += f"\n[DOCUMENT SOURCE: {doc.get('source')} - Page {doc.get('page')}]\n"
+                    context_str += f"{doc.get('content')}\n"
+                return context_str
+                
+            else:
+                print(f"MOSS Server returned error code: {response.status_code}")
+                return "Warning: Technical manual link database is temporarily unresponsive."
+                
+    except Exception as e:
+        print(f"Failed to connect to MOSS server: {str(e)}")
+        return "Warning: Connection to technical manual documentation layer failed."
 
 def load_prompt(filename: str) -> str:
     path = os.path.join("prompts", filename)
     if os.path.exists(path):
-        with open(path, "r") as f:
+        with open(path, f"r") as f:
             return f.read()
     return ""
 
@@ -58,9 +65,9 @@ async def chat_endpoint(request: ChatRequest):
     state = SESSIONS[request.session_id]
     state.history.append({"role": "user", "text": request.message})
     
-    # 1. Fetch relevant manual snippets using our retrieval layer
-    # We query using the initial problem or the latest message to find technical context
-    manual_context = mock_moss_retrieve(state.product_id, state.initial_problem)
+    # --- HIT THE LIVE DB ENGINE ---
+    # Fetching real verified database snippets instead of static keywords!
+    manual_context = await live_moss_retrieve(state.product_id, state.initial_problem)
     
     system_rules = load_prompt("system_prompt.txt")
     
@@ -69,7 +76,6 @@ async def chat_endpoint(request: ChatRequest):
         prefix = "User Symptom: " if turn["role"] == "user" else "Technician: "
         formatted_history += f"{prefix}{turn['text']}\n"
     
-    # 2. Append the extracted manual context directly into Gemini's active prompt block
     if state.question_count < 3:
         stage = "investigation"
         investigation_rules = load_prompt("investigation_prompt.txt")
@@ -79,7 +85,7 @@ async def chat_endpoint(request: ChatRequest):
         
         {investigation_rules}
         
-        --- VERIFIED MANUAL MANUAL DOCUMENTATION CONTEXT ---
+        --- VERIFIED MANUAL DOCUMENTATION CONTEXT ---
         {manual_context}
         
         --- CURRENT TRANSACTION STATE ---
@@ -101,7 +107,7 @@ async def chat_endpoint(request: ChatRequest):
         
         {diagnosis_rules}
         
-        --- VERIFIED MANUAL MANUAL DOCUMENTATION CONTEXT ---
+        --- VERIFIED MANUAL DOCUMENTATION CONTEXT ---
         {manual_context}
         
         --- FINAL DATA COLLECTION ---
