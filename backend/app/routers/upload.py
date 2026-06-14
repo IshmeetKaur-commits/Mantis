@@ -1,4 +1,5 @@
 import os
+import requests
 
 from fastapi import APIRouter, UploadFile, File, Form
 
@@ -18,6 +19,13 @@ async def upload_file(
 
     with open(filepath, "wb") as buffer:
         buffer.write(await file.read())
+        with open(filepath, "rb") as pdf_file:
+    requests.post(
+        "http://localhost:5001/api/index-manual",
+        data={"product_id": product_id},
+        files={"manual": pdf_file}
+    )
+        
 
     db = SessionLocal()
 
